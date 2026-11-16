@@ -1,0 +1,417 @@
+{
+  "info": {
+    "name": "Agentry webhook check",
+    "description": "Sends what Agentry sends to a webhook agent and checks the answers. Set webhook_url, health_url and webhook_secret in the environment. Run the whole collection; replies the agent posts to reply_url go to {{reply_base}} — the skill's scripts/check.mjs runs a receiver there and checks them.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.variables.set('now_iso', new Date().toISOString());",
+          "// A fresh run id per run, so the server's de-dupe doesn't swallow a re-run. check.mjs pins it.",
+          "if (pm.info.requestName === 'Health' && !pm.variables.get('keep_run_id')) {",
+          "  pm.environment.set('run_id', Date.now().toString(36) + Math.random().toString(36).slice(2, 6));",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('GET /health → 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{health_url}}",
+        "description": "Agentry calls <origin>/health; any 2xx passes."
+      }
+    },
+    {
+      "name": "Missing signature",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "pm.request.body.update({ mode: 'raw', raw: body, options: { raw: { language: 'json' } } });",
+              "pm.request.headers.remove('X-Super-Signature');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('missing signature → 401', () => pm.expect(pm.response.code).to.equal(401));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"agent_id\":\"{{agent_id}}\",\"user\":{\"id\":\"{{user_id}}\",\"display_name\":\"Agentry Test\",\"timezone\":\"Asia/Kolkata\",\"utc_offset\":\"+05:30\",\"utc_offset_minutes\":330},\"reply_url\":\"{{reply_base}}/chats/chat_{{run_id}}/reply\",\"reply_token\":\"rtok_{{run_id}}\",\"settings\":{},\"envelope\":{\"type\":\"message\",\"id\":\"msg_unsigned_{{run_id}}\",\"chat_id\":\"chat_{{run_id}}\",\"from\":{\"kind\":\"user\",\"id\":\"{{user_id}}\"},\"timestamp\":\"{{now_iso}}\",\"content\":{\"kind\":\"text\",\"text\":\"This request has no signature and must be refused.\"}}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{webhook_url}}",
+        "description": "No X-Super-Signature header. Must be refused with 401."
+      }
+    },
+    {
+      "name": "Wrong signature",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "pm.request.body.update({ mode: 'raw', raw: body, options: { raw: { language: 'json' } } });",
+              "pm.request.headers.upsert({ key: 'X-Super-Signature', value: 'sha256=' + '0'.repeat(64) });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('wrong signature → 401', () => pm.expect(pm.response.code).to.equal(401));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"agent_id\":\"{{agent_id}}\",\"user\":{\"id\":\"{{user_id}}\",\"display_name\":\"Agentry Test\",\"timezone\":\"Asia/Kolkata\",\"utc_offset\":\"+05:30\",\"utc_offset_minutes\":330},\"reply_url\":\"{{reply_base}}/chats/chat_{{run_id}}/reply\",\"reply_token\":\"rtok_{{run_id}}\",\"settings\":{},\"envelope\":{\"type\":\"message\",\"id\":\"msg_forged_{{run_id}}\",\"chat_id\":\"chat_{{run_id}}\",\"from\":{\"kind\":\"user\",\"id\":\"{{user_id}}\"},\"timestamp\":\"{{now_iso}}\",\"content\":{\"kind\":\"text\",\"text\":\"This request has a wrong signature and must be refused.\"}}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{webhook_url}}",
+        "description": "A well-formed but wrong signature. Must be refused with 401."
+      }
+    },
+    {
+      "name": "Ping",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "pm.request.body.update({ mode: 'raw', raw: body, options: { raw: { language: 'json' } } });",
+              "const secret = pm.variables.get('webhook_secret') || '';",
+              "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'X-Super-Signature', value: 'sha256=' + sig });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('ping → 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"agent_id\":\"{{agent_id}}\",\"user\":{\"id\":\"{{user_id}}\",\"display_name\":\"Agentry Test\",\"timezone\":\"Asia/Kolkata\",\"utc_offset\":\"+05:30\",\"utc_offset_minutes\":330},\"settings\":{},\"envelope\":{\"type\":\"ping\",\"id\":\"evt_ping_{{run_id}}\",\"chat_id\":\"chat_{{run_id}}\",\"from\":{\"kind\":\"user\",\"id\":\"{{user_id}}\"},\"timestamp\":\"{{now_iso}}\"}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{webhook_url}}",
+        "description": "Setup check the console sends. 2xx, nothing else."
+      }
+    },
+    {
+      "name": "Install",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "pm.request.body.update({ mode: 'raw', raw: body, options: { raw: { language: 'json' } } });",
+              "const secret = pm.variables.get('webhook_secret') || '';",
+              "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'X-Super-Signature', value: 'sha256=' + sig });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('install event → 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"agent_id\":\"{{agent_id}}\",\"user\":{\"id\":\"{{user_id}}\",\"display_name\":\"Agentry Test\",\"timezone\":\"Asia/Kolkata\",\"utc_offset\":\"+05:30\",\"utc_offset_minutes\":330},\"settings\":{},\"envelope\":{\"type\":\"install\",\"id\":\"evt_install_{{run_id}}\",\"chat_id\":\"chat_{{run_id}}\",\"from\":{\"kind\":\"user\",\"id\":\"{{user_id}}\"},\"timestamp\":\"{{now_iso}}\"}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{webhook_url}}",
+        "description": "A user added the agent. 2xx; no reply_url."
+      }
+    },
+    {
+      "name": "User typing",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "pm.request.body.update({ mode: 'raw', raw: body, options: { raw: { language: 'json' } } });",
+              "const secret = pm.variables.get('webhook_secret') || '';",
+              "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'X-Super-Signature', value: 'sha256=' + sig });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('user typing event → 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"agent_id\":\"{{agent_id}}\",\"user\":{\"id\":\"{{user_id}}\",\"display_name\":\"Agentry Test\",\"timezone\":\"Asia/Kolkata\",\"utc_offset\":\"+05:30\",\"utc_offset_minutes\":330},\"reply_url\":\"{{reply_base}}/chats/chat_{{run_id}}/reply\",\"reply_token\":\"rtok_{{run_id}}\",\"settings\":{},\"envelope\":{\"type\":\"typing_start\",\"id\":\"evt_typing_{{run_id}}\",\"chat_id\":\"chat_{{run_id}}\",\"from\":{\"kind\":\"user\",\"id\":\"{{user_id}}\"},\"timestamp\":\"{{now_iso}}\",\"expires_at\":\"{{now_iso}}\"}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{webhook_url}}",
+        "description": "The user is typing. 2xx, no reply."
+      }
+    },
+    {
+      "name": "Unknown event type",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "pm.request.body.update({ mode: 'raw', raw: body, options: { raw: { language: 'json' } } });",
+              "const secret = pm.variables.get('webhook_secret') || '';",
+              "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'X-Super-Signature', value: 'sha256=' + sig });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('unknown event type → 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"agent_id\":\"{{agent_id}}\",\"user\":{\"id\":\"{{user_id}}\",\"display_name\":\"Agentry Test\",\"timezone\":\"Asia/Kolkata\",\"utc_offset\":\"+05:30\",\"utc_offset_minutes\":330},\"settings\":{},\"envelope\":{\"type\":\"some_future_event\",\"id\":\"evt_future_{{run_id}}\",\"chat_id\":\"chat_{{run_id}}\",\"from\":{\"kind\":\"user\",\"id\":\"{{user_id}}\"},\"timestamp\":\"{{now_iso}}\"}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{webhook_url}}",
+        "description": "Future event types must be acknowledged, not rejected."
+      }
+    },
+    {
+      "name": "Message",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "pm.request.body.update({ mode: 'raw', raw: body, options: { raw: { language: 'json' } } });",
+              "const secret = pm.variables.get('webhook_secret') || '';",
+              "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'X-Super-Signature', value: 'sha256=' + sig });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('message → 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+              "pm.test('message answered within 8 s', () => pm.expect(pm.response.responseTime).to.be.below(8000));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"agent_id\":\"{{agent_id}}\",\"user\":{\"id\":\"{{user_id}}\",\"display_name\":\"Agentry Test\",\"timezone\":\"Asia/Kolkata\",\"utc_offset\":\"+05:30\",\"utc_offset_minutes\":330},\"reply_url\":\"{{reply_base}}/chats/chat_{{run_id}}/reply\",\"reply_token\":\"rtok_{{run_id}}\",\"settings\":{},\"envelope\":{\"type\":\"message\",\"id\":\"msg_{{run_id}}\",\"chat_id\":\"chat_{{run_id}}\",\"from\":{\"kind\":\"user\",\"id\":\"{{user_id}}\"},\"timestamp\":\"{{now_iso}}\",\"content\":{\"kind\":\"text\",\"text\":\"{{test_message}}\"}}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{webhook_url}}",
+        "description": "A real user message. 2xx within 8 s; the answer goes to reply_url afterwards."
+      }
+    },
+    {
+      "name": "Message again (retry)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "pm.request.body.update({ mode: 'raw', raw: body, options: { raw: { language: 'json' } } });",
+              "const secret = pm.variables.get('webhook_secret') || '';",
+              "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'X-Super-Signature', value: 'sha256=' + sig });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('retried message → 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"agent_id\":\"{{agent_id}}\",\"user\":{\"id\":\"{{user_id}}\",\"display_name\":\"Agentry Test\",\"timezone\":\"Asia/Kolkata\",\"utc_offset\":\"+05:30\",\"utc_offset_minutes\":330},\"reply_url\":\"{{reply_base}}/chats/chat_{{run_id}}/reply\",\"reply_token\":\"rtok_{{run_id}}\",\"settings\":{},\"envelope\":{\"type\":\"message\",\"id\":\"msg_{{run_id}}\",\"chat_id\":\"chat_{{run_id}}\",\"from\":{\"kind\":\"user\",\"id\":\"{{user_id}}\"},\"timestamp\":\"{{now_iso}}\",\"content\":{\"kind\":\"text\",\"text\":\"{{test_message}}\"}}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{webhook_url}}",
+        "description": "The same envelope id again, as a retry. 2xx, and the agent must not answer twice."
+      }
+    }
+  ]
+}

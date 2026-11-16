@@ -1,0 +1,12 @@
+{
+  "name": "agentry-skills",
+  "description": "Skills for shipping agents on Agentry",
+  "owner": { "name": "Agentry" },
+  "plugins": [
+    {
+      "name": "agentry",
+      "source": "./",
+      "description": "Connect your AI agent to Agentry: webhook setup, Postman testing, tunnel or deployment, signing secret."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "agentry",
+  "description": "Connect your AI agent to Agentry: webhook setup, Postman testing, tunnel or deployment, signing secret.",
+  "version": "1.0.0",
+  "author": { "name": "Agentry" },
+  "homepage": "https://agentry.covenantcode.tech",
+  "keywords": ["agentry", "webhook", "agents", "marketplace"]
+}
